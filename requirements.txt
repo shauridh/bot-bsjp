@@ -1,4 +1,5 @@
 requests
 pandas
+pandas_ta
 schedule
 python-telegram-bot==20.0
