@@ -1,5 +1,5 @@
-# Gunakan Python 3.10 (Versi Stabil)
-FROM python:3.10-slim
+# PENTING: Gunakan Python 3.12 (Syarat wajib pandas_ta terbaru)
+FROM python:3.12-slim
 
 # Set Timezone Jakarta
 ENV TZ=Asia/Jakarta
