@@ -1,5 +1,6 @@
 requests
 pandas
 numpy<2.0
+https://github.com/aarigs/pandas-ta/archive/refs/heads/master.zip
 schedule
 python-telegram-bot==20.0
