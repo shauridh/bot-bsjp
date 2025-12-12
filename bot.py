@@ -1,5 +1,5 @@
 import matplotlib
-matplotlib.use('Agg') # Wajib untuk VPS tanpa layar
+matplotlib.use('Agg') 
 import mplfinance as mpf
 import requests
 import pandas as pd
@@ -17,16 +17,13 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "TOKEN_DARI_COOLIFY")
 CHAT_ID = os.getenv("CHAT_ID", "ID_DARI_COOLIFY")
 GOAPI_KEY = os.getenv("GOAPI_KEY", "KEY_DARI_COOLIFY")
 
-# --- FUNGSI CHART GENERATOR ---
+# --- FUNGSI CHART ---
 def generate_chart(df, ticker, buy_price, tp_price, sl_price, signal_type):
     try:
         subset = df.tail(60).copy()
-        
-        # Style Chart
         mc = mpf.make_marketcolors(up='#2ebd85', down='#f6465d', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, style='nightclouds', gridstyle=':')
         
-        # Buffer gambar
         buf = io.BytesIO()
         title = f"{ticker} - {signal_type}\nBuy: {buy_price} | TP: {tp_price} | SL: {sl_price}"
         
@@ -40,10 +37,10 @@ def generate_chart(df, ticker, buy_price, tp_price, sl_price, signal_type):
         buf.seek(0)
         return buf
     except Exception as e:
-        print(f"❌ Gagal bikin chart {ticker}: {e}")
+        print(f"❌ Gagal chart {ticker}: {e}")
         return None
 
-# --- TELEGRAM SENDER ---
+# --- TELEGRAM ---
 async def send_signal(message, chart_buffer=None):
     try:
         bot = Bot(token=TELEGRAM_TOKEN)
@@ -54,9 +51,8 @@ async def send_signal(message, chart_buffer=None):
     except Exception as e:
         print(f"❌ Gagal kirim telegram: {e}")
 
-# --- DATA FEED ---
+# --- DATA ---
 def get_dynamic_tickers():
-    # Ambil data LQ45 + Saham Favorit
     url = f"https://api.goapi.io/stock/idx/index/LQ45" 
     params = {"api_key": GOAPI_KEY}
     try:
@@ -90,7 +86,7 @@ def get_data(ticker):
         pass
     return None
 
-# --- STRATEGI (STRICT MODE) ---
+# --- STRATEGI ---
 
 def check_bsjp(df, ticker):
     df['MA5'] = df['close'].rolling(5).mean()
@@ -103,6 +99,7 @@ def check_bsjp(df, ticker):
     wick_ratio = upper_wick / total_range
     val = last['close'] * last['volume']
     
+    # Strict Filter
     if (last['volume'] > (2 * last['VolMA20']) and 
         last['close'] > last['MA5'] and
         wick_ratio < 0.35 and 
@@ -149,7 +146,6 @@ def check_scalping(df, ticker):
     df['RSI'] = df.ta.rsi(length=14)
     last = df.iloc[-1]
     
-    # Syarat Scalping: RSI < 30, Candle Hijau, Liquid
     if (last['RSI'] < 30 and 
         last['close'] > last['open'] and 
         (last['close'] * last['volume']) > 2_000_000_000):
@@ -165,7 +161,6 @@ def check_scalping(df, ticker):
         return msg, generate_chart(df, ticker, buy, tp, sl, "SCALPING")
     return None, None
 
-# --- ENGINE ---
 def run_scanner(mode="BSJP"):
     tickers = get_dynamic_tickers()
     print(f"🔎 Scanning {len(tickers)} saham untuk mode {mode}...")
@@ -185,43 +180,53 @@ def run_scanner(mode="BSJP"):
         if msg:
             found_any = True
             asyncio.run(send_signal(msg, chart))
-            print(f"✅ Sinyal dikirim: {ticker}")
+            print(f"✅ Sinyal: {ticker}")
             time.sleep(1) 
         time.sleep(0.2) 
         
     if not found_any and mode == "BSJP":
         asyncio.run(send_signal(f"😴 Mode {mode}: Tidak ada sinyal (Strict Filter)."))
 
-# --- SCHEDULER (UTC FIX) ---
+# --- SCHEDULER BARU (JAM PASAR FIX) ---
 
-def job_scalping_intraday():
-    # Hitung Jam WIB Manual (Server UTC + 7 Jam)
-    now_utc = datetime.now(timezone.utc)
-    now_wib = now_utc + timedelta(hours=7)
-    jam = now_wib.hour
-    
-    print(f"⏱️ Cek Scalping... Jam WIB: {now_wib.strftime('%H:%M')} (Server: {now_utc.strftime('%H:%M')})")
-    
-    if 9 <= jam < 15: 
-        run_scanner(mode="SCALPING")
-    else:
-        print(f"zzz Pasar Tutup (Jam {jam}).")
+def wib_to_server(jam_wib_str):
+    """
+    Mengubah Jam WIB (String) ke Jam Server UTC (String).
+    Contoh: Input "09:00" -> Output "02:00"
+    """
+    t_wib = datetime.strptime(jam_wib_str, "%H:%M")
+    # Kurangi 7 Jam untuk dapat UTC
+    t_utc = t_wib - timedelta(hours=7)
+    return t_utc.strftime("%H:%M")
 
-# Jadwal
-schedule.every(30).minutes.do(job_scalping_intraday)
-schedule.every().day.at("14:50").do(run_scanner, mode="BSJP")
-schedule.every().day.at("16:15").do(run_scanner, mode="SWING")
+# DAFTAR JAM KERJA (WIB)
+# Kita set spesifik agar pas dengan candle close
+jadwal_scalping_wib = [
+    "09:00", "09:30", "10:00", "10:30", "11:00", "11:30", # Sesi 1
+    "13:30", "14:00", "14:30"                             # Sesi 2
+]
 
-# Heartbeat (Cek log setiap 2 menit)
+# Daftarkan jadwal Scalping
+print("📅 Menjadwalkan Scalping di jam (WIB):")
+for jam_wib in jadwal_scalping_wib:
+    jam_server = wib_to_server(jam_wib)
+    schedule.every().day.at(jam_server).do(run_scanner, mode="SCALPING")
+    print(f"   - {jam_wib} WIB (Server: {jam_server})")
+
+# Daftarkan jadwal BSJP & Swing
+schedule.every().day.at(wib_to_server("14:50")).do(run_scanner, mode="BSJP")
+schedule.every().day.at(wib_to_server("16:15")).do(run_scanner, mode="SWING")
+
+# Heartbeat (WIB)
 def heartbeat():
     now_wib = datetime.now(timezone.utc) + timedelta(hours=7)
     print(f"💓 Bot Hidup | WIB: {now_wib.strftime('%H:%M:%S')}")
 
-schedule.every(2).minutes.do(heartbeat)
+schedule.every(1).minutes.do(heartbeat)
 
-print("🤖 Super Bot (Visual + Timezone Fix) Aktif!")
-asyncio.run(send_signal("✅ Super Bot Aktif!\nTimezone Fixed (WIB). Siap memantau pasar! 🇮🇩"))
+print("🤖 Super Bot (Fixed Schedule) Aktif!")
+asyncio.run(send_signal("✅ Super Bot Aktif!\nJadwal Scan disesuaikan dengan Jam Bursa (WIB)."))
 
 while True:
     schedule.run_pending()
-    time.sleep(30)
+    time.sleep(1)
